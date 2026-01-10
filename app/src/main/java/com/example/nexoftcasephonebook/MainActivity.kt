@@ -12,7 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.nexoftcasephonebook.ui.theme.NexoftCasePhoneBookTheme
 import androidx.compose.runtime.remember
-
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -28,15 +29,17 @@ class MainActivity : ComponentActivity() {
 
             com.example.nexoftcasephonebook.presentation.contacts.ContactsScreen(vm)
             NexoftCasePhoneBookTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ){
+                com.example.nexoftcasephonebook.presentation.contacts.ContactsScreen(vm)
+
+            }
+            }
             }
         }
-    }
+
 }
 
 @Composable

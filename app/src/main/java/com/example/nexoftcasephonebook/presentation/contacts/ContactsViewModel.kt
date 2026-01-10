@@ -1,4 +1,5 @@
 package com.example.nexoftcasephonebook.presentation.contacts
+import android.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.nexoftcasephonebook.domain.repository.ContactsRepository
@@ -28,22 +29,35 @@ class ContactsViewModel(
     }
 
     private fun load() = viewModelScope.launch {
-        Log.d("NEXOFT", "Loading contacts...")
         _state.update { it.copy(isLoading = true, error = null) }
-        runCatching { repo.getAll() }
-            .onSuccess { list ->
-                Log.d("NEXOFT", "Loaded: ${list.size}")
+        val result = kotlin.runCatching {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                repo.getAll()
+            }
+        }
+            result.onSuccess { list ->
                 all = list
                 _state.update { it.copy(isLoading = false) }
                 applyFilter()
             }
             .onFailure { ex ->
-                Log.e("NEXOFT", "Load failed: ${ex.message}", ex)
                 _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
             }
 
     }
 
+     fun createUser(firstName: String, lastName: String, phoneNumber: String, profileImageUrl: String){
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, error = null) }
+            runCatching {   repo.createUser(firstName, lastName, phoneNumber, profileImageUrl)
+        }.onSuccess {
+            load()
+            }
+                .onFailure { ex ->
+                    _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
+                }
+        }
+    }
     private fun applyFilter() {
         val q = _state.value.query.trim()
         val filtered = if (q.isEmpty()) all else all.filter {
