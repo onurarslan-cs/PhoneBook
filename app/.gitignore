@@ -1,0 +1,14 @@
+# Local config (API keys, SDK path)
+local.properties
+
+# Build outputs
+**/build/
+.gradle/
+
+# IDE
+.idea/
+*.iml
+
+# Mac/Windows
+.DS_Store
+Thumbs.db
