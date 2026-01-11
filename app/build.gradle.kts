@@ -54,7 +54,8 @@ dependencies {
 
     // photosource
     implementation("androidx.compose.material:material-icons-extended")
-
+    // lottie
+    implementation("com.airbnb.android:lottie-compose:6.0.0")
     // navigation
     implementation(libs.androidx.navigation.compose)
     // viewModel

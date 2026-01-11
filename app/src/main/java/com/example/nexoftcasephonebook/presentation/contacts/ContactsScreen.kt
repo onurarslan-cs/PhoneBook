@@ -68,7 +68,7 @@ fun ContactsScreen(vm: ContactsViewModel) {
     // Success ekranda 1.2 sn dur, sonra listeye dön + refresh
     LaunchedEffect(route) {
         if (route == ContactsRoute.SUCCESS) {
-            delay(1200)
+            delay(2000)
             vm.onEvent(ContactsEvent.Load)
             route = ContactsRoute.LIST
         }
