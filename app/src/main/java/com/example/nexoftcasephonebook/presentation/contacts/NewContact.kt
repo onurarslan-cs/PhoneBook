@@ -29,25 +29,21 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.airbnb.lottie.compose.*
-import com.example.nexoftcasephonebook.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
-import androidx.compose.material.icons.filled.Check
+import com.example.nexoftcasephonebook.R
 
-private enum class SaveStep { FORM, SAVING, DONE_ANIM, SUCCESS }
+private enum class SavePhase { Form, Saving, DoneLottie, Success }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddNewContact(
     vm: ContactsViewModel,
     onCancel: () -> Unit,
-    onSaved: () -> Unit = {}
+    onSaved: () -> Unit
 ) {
     BackHandler { onCancel() }
-
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var firstName by remember { mutableStateOf("") }
     var lastName by remember { mutableStateOf("") }
@@ -57,19 +53,19 @@ fun AddNewContact(
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
 
-    var step by remember { mutableStateOf(SaveStep.FORM) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    val canSave =
-        firstName.isNotBlank() && lastName.isNotBlank() && phone.isNotBlank() && step == SaveStep.FORM
+    var phase by remember { mutableStateOf(SavePhase.Form) }
 
-    // Gallery picker
+    val canSave = firstName.isNotBlank() && lastName.isNotBlank() && phone.isNotBlank()
+
     val pickPhoto = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) photoUri = uri
     }
 
-    // Camera
     val takePicture = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success ->
@@ -77,168 +73,150 @@ fun AddNewContact(
         tempCameraUri = null
     }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        // Root overlay stacking (Form + Sheet + Overlay)
-        Box(Modifier.fillMaxSize()) {
+    if (showPhotoSheet) {
+        PhotoSourceSheet(
+            onDismiss = { showPhotoSheet = false },
+            onCamera = {
+                showPhotoSheet = false
+                val uri = createImageUri(context)
+                tempCameraUri = uri
+                takePicture.launch(uri)
+            },
+            onGallery = {
+                showPhotoSheet = false
+                pickPhoto.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            }
+        )
+    }
 
-            when (step) {
-                SaveStep.FORM, SaveStep.SAVING -> {
-                    // === FORM UI ===
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .windowInsetsPadding(WindowInsets.safeDrawing)
-                            .padding(horizontal = 20.dp, vertical = 12.dp)
-                    ) {
-                        // Top bar
-                        Box(Modifier.fillMaxWidth()) {
-                            TextButton(
-                                onClick = onCancel,
-                                modifier = Modifier.align(Alignment.CenterStart)
-                            ) { Text("Cancel") }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
 
-                            Text(
-                                text = "New Contact",
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                                modifier = Modifier.align(Alignment.Center)
-                            )
+        // 1) Done.lottie full screen
+        if (phase == SavePhase.DoneLottie) {
+            DoneLottieFullScreen(
+                onFinished = { phase = SavePhase.Success }
+            )
+            return@Surface
+        }
 
-                            TextButton(
-                                enabled = canSave,
-                                onClick = {
-                                    scope.launch {
-                                        step = SaveStep.SAVING
-                                        try {
-                                            vm.createUser(
-                                                firstName = firstName.trim(),
-                                                lastName = lastName.trim(),
-                                                phoneNumber = phone.trim(),
+        // 2) Success screen (screenshot gibi) → sonra kapan
+        if (phase == SavePhase.Success) {
+            SaveSuccessScreen()
+            LaunchedEffect(Unit) {
+                delay(1200)
+                onSaved()
+            }
+            return@Surface
+        }
 
-                                                profileImageUrl = photoUri?.toString().orEmpty()
-                                            )
-                                            vm.onEvent(ContactsEvent.Load)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
+            // Top bar
+            Box(Modifier.fillMaxWidth()) {
+                TextButton(
+                    onClick = onCancel,
+                    enabled = phase != SavePhase.Saving,
+                    modifier = Modifier.align(Alignment.CenterStart)
+                ) { Text("Cancel") }
 
-                                            // success
-                                            step = SaveStep.DONE_ANIM
-                                        } catch (e: Exception) {
-                                            // error
-                                            step = SaveStep.FORM
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.align(Alignment.CenterEnd)
-                            ) { Text("Done") }
-                        }
+                Text(
+                    text = "New Contact",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    modifier = Modifier.align(Alignment.Center)
+                )
 
-                        Spacer(Modifier.height(22.dp))
-
-                        // Avatar + Add Photo
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            if (photoUri != null) {
-                                AsyncImage(
-                                    model = photoUri,
-                                    contentDescription = null,
-                                    modifier = Modifier
-                                        .size(110.dp)
-                                        .clip(CircleShape)
+                TextButton(
+                    enabled = canSave && phase != SavePhase.Saving,
+                    onClick = {
+                        scope.launch {
+                            phase = SavePhase.Saving
+                            try {
+                                vm.createUser(
+                                    firstName = firstName.trim(),
+                                    lastName = lastName.trim(),
+                                    phoneNumber = phone.trim(),
+                                    profileImageUrl = photoUri?.toString() ?: ""
                                 )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(110.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFFD9D9D9)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Person,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(52.dp)
-                                    )
-                                }
+                                // API başarılı -> önce lottie
+                                phase = SavePhase.DoneLottie
+                            } catch (e: Exception) {
+                                phase = SavePhase.Form
                             }
-
-                            Spacer(Modifier.height(10.dp))
-
-                            TextButton(
-                                onClick = { showPhotoSheet = true },
-                                enabled = (step == SaveStep.FORM) // saving close
-                            ) { Text("Add Photo") }
                         }
+                    },
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                ) { Text("Done") }
+            }
 
-                        Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(22.dp))
 
-                        ContactField(
-                            value = firstName,
-                            onValueChange = { firstName = it },
-                            placeholder = "First Name",
-                            imeAction = ImeAction.Next
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        ContactField(
-                            value = lastName,
-                            onValueChange = { lastName = it },
-                            placeholder = "Last Name",
-                            imeAction = ImeAction.Next
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        ContactField(
-                            value = phone,
-                            onValueChange = { phone = it },
-                            placeholder = "Phone Number",
-                            keyboardType = KeyboardType.Phone,
-                            imeAction = ImeAction.Done
-                        )
-                    }
-
-                    // Saving overlay
-                    if (step == SaveStep.SAVING) {
-                        SavingOverlay()
-                    }
-                }
-
-                SaveStep.DONE_ANIM -> {
-                    DoneLottieFullScreen(
-                        rawRes = R.raw.done,
-                        onFinished = { step = SaveStep.SUCCESS }
+            // Avatar + Add Photo
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (photoUri != null) {
+                    AsyncImage(
+                        model = photoUri,
+                        contentDescription = null,
+                        modifier = Modifier.size(110.dp).clip(CircleShape)
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(110.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFD9D9D9)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(52.dp)
+                        )
+                    }
                 }
 
-                SaveStep.SUCCESS -> {
-                    SaveSuccessScreen()
+                Spacer(Modifier.height(10.dp))
 
-                    LaunchedEffect(Unit) {
-                        delay(1200)
-                        onSaved()
-                        onCancel()
-                    }
+                TextButton(onClick = { showPhotoSheet = true }) {
+                    Text("Add Photo")
                 }
             }
 
-            // Photo source bottom sheet (overlay)
-            if (showPhotoSheet) {
-                PhotoSourceSheet(
-                    onDismiss = { showPhotoSheet = false },
-                    onCamera = {
-                        showPhotoSheet = false
-                        val uri = createImageUri(context)
-                        tempCameraUri = uri
-                        takePicture.launch(uri)
-                    },
-                    onGallery = {
-                        showPhotoSheet = false
-                        pickPhoto.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
-                    }
-                )
+            Spacer(Modifier.height(18.dp))
+
+            ContactField(
+                value = firstName,
+                onValueChange = { firstName = it },
+                placeholder = "First Name",
+                imeAction = ImeAction.Next
+            )
+            Spacer(Modifier.height(12.dp))
+            ContactField(
+                value = lastName,
+                onValueChange = { lastName = it },
+                placeholder = "Last Name",
+                imeAction = ImeAction.Next
+            )
+            Spacer(Modifier.height(12.dp))
+            ContactField(
+                value = phone,
+                onValueChange = { phone = it },
+                placeholder = "Phone Number",
+                keyboardType = KeyboardType.Phone,
+                imeAction = ImeAction.Done
+            )
+
+            if (phase == SavePhase.Saving) {
+                SavingOverlay()
             }
         }
     }
@@ -304,7 +282,7 @@ fun PhotoSourceSheet(
                 shape = RoundedCornerShape(24.dp),
                 contentPadding = PaddingValues(vertical = 18.dp)
             ) {
-                Icon(imageVector = Icons.Outlined.PhotoCamera, contentDescription = null)
+                Icon(Icons.Outlined.PhotoCamera, contentDescription = null)
                 Spacer(Modifier.width(12.dp))
                 Text("Camera", style = MaterialTheme.typography.titleMedium)
             }
@@ -315,7 +293,7 @@ fun PhotoSourceSheet(
                 shape = RoundedCornerShape(24.dp),
                 contentPadding = PaddingValues(vertical = 18.dp)
             ) {
-                Icon(imageVector = Icons.Outlined.PhotoLibrary, contentDescription = null)
+                Icon(Icons.Outlined.PhotoLibrary, contentDescription = null)
                 Spacer(Modifier.width(12.dp))
                 Text("Gallery", style = MaterialTheme.typography.titleMedium)
             }
@@ -336,20 +314,18 @@ fun PhotoSourceSheet(
 
 @Composable
 fun DoneLottieFullScreen(
-    rawRes: Int,
     onFinished: () -> Unit
 ) {
-    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(rawRes))
-    val anim = rememberLottieAnimatable()
+    // ✅ res/raw/done.lottie  -> R.raw.done
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.done))
+    val progress by animateLottieCompositionAsState(
+        composition = composition,
+        iterations = 1,
+        isPlaying = true
+    )
 
-    LaunchedEffect(composition) {
-        if (composition != null) {
-            anim.animate(
-                composition = composition!!,
-                iterations = 1
-            )
-            onFinished()
-        }
+    LaunchedEffect(progress) {
+        if (progress >= 0.999f) onFinished()
     }
 
     Box(
@@ -358,8 +334,8 @@ fun DoneLottieFullScreen(
     ) {
         LottieAnimation(
             composition = composition,
-            progress = { anim.progress },
-            modifier = Modifier.size(220.dp)
+            progress = { progress },
+            modifier = Modifier.size(240.dp)
         )
     }
 }
@@ -367,43 +343,21 @@ fun DoneLottieFullScreen(
 @Composable
 fun SaveSuccessScreen() {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Green circle + white check
-            Box(
-                modifier = Modifier
-                    .size(140.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF19C23E)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp)
-                )
-            }
-
-            Spacer(Modifier.height(22.dp))
-
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // burada istersen statik icon da kullanabilirsin; şimdilik aynı ekrana yazı:
+            Spacer(Modifier.height(18.dp))
             Text(
                 text = "All Done!",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.ExtraBold
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
             )
-
-            Spacer(Modifier.height(10.dp))
-
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = "New contact saved 🎉",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

@@ -1,13 +1,15 @@
 package com.example.nexoftcasephonebook.presentation.contacts
-import android.R
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.nexoftcasephonebook.domain.model.Contact
 import com.example.nexoftcasephonebook.domain.repository.ContactsRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import android.util.Log
+import kotlinx.coroutines.withContext
 
 class ContactsViewModel(
     private val repo: ContactsRepository
@@ -16,7 +18,7 @@ class ContactsViewModel(
     private val _state = MutableStateFlow(ContactsState(isLoading = true))
     val state: StateFlow<ContactsState> = _state
 
-    private var all: List<com.example.nexoftcasephonebook.domain.model.Contact> = emptyList()
+    private var all: List<Contact> = emptyList()
 
     fun onEvent(e: ContactsEvent) {
         when (e) {
@@ -28,36 +30,79 @@ class ContactsViewModel(
         }
     }
 
-    private fun load() = viewModelScope.launch {
-        _state.update { it.copy(isLoading = true, error = null) }
-        val result = kotlin.runCatching {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                repo.getAll()
-            }
-        }
-            result.onSuccess { list ->
-                all = list
-                _state.update { it.copy(isLoading = false) }
-                applyFilter()
-            }
-            .onFailure { ex ->
-                _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
-            }
-
-    }
-
-     fun createUser(firstName: String, lastName: String, phoneNumber: String, profileImageUrl: String){
+    fun createUser(
+        firstName: String,
+        lastName: String,
+        phoneNumber: String,
+        profileImageUrl: String
+    ) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
-            runCatching {   repo.createUser(firstName, lastName, phoneNumber, profileImageUrl)
-        }.onSuccess {
-            load()
-            }
-                .onFailure { ex ->
-                    _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
+
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repo.createUser(firstName, lastName, phoneNumber, profileImageUrl)
                 }
+            }.onSuccess {
+                load()
+            }.onFailure { ex ->
+                _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
+            }
         }
     }
+
+    fun deleteUser(id: String) {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, error = null) }
+
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repo.deleteUser(id)
+                }
+            }.onSuccess {
+                load()
+            }.onFailure { ex ->
+                _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
+            }
+        }
+    }
+
+    fun updateUser(
+        id: String,
+        firstName: String,
+        lastName: String,
+        phoneNumber: String,
+        profileImageUrl: String?
+    ) {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true, error = null) }
+
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repo.updateUser(id, firstName, lastName, phoneNumber, profileImageUrl)
+                }
+            }.onSuccess {
+                load()
+            }.onFailure { ex ->
+                _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
+            }
+        }
+    }
+
+    private fun load() = viewModelScope.launch {
+        _state.update { it.copy(isLoading = true, error = null) }
+
+        runCatching {
+            withContext(Dispatchers.IO) { repo.getAll() }
+        }.onSuccess { list ->
+            all = list
+            _state.update { it.copy(isLoading = false) }
+            applyFilter()
+        }.onFailure { ex ->
+            _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
+        }
+    }
+
     private fun applyFilter() {
         val q = _state.value.query.trim()
         val filtered = if (q.isEmpty()) all else all.filter {
