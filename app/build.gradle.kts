@@ -51,6 +51,10 @@ android {
 }
 
 dependencies {
+
+    // photosource
+    implementation("androidx.compose.material:material-icons-extended")
+
     // navigation
     implementation(libs.androidx.navigation.compose)
     // viewModel

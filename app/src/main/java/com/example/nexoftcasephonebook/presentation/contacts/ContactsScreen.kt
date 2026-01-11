@@ -1,5 +1,6 @@
 package com.example.nexoftcasephonebook.presentation.contacts
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -23,8 +24,14 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.style.TextAlign
+import kotlinx.coroutines.delay
+
+private enum class ContactsRoute { LIST, ADD, SUCCESS }
 
 
 
@@ -56,77 +63,81 @@ fun ContactsScreen(vm: ContactsViewModel) {
 
     LaunchedEffect(Unit) { vm.onEvent(ContactsEvent.Load) }
 
-    val groupsSorted = remember(state.grouped) { state.grouped.toSortedMap() }
-    val isEmpty = groupsSorted.values.sumOf { it.size } == 0
-    var showAddScreen by remember { mutableStateOf(false) }
+    var route by rememberSaveable { mutableStateOf(ContactsRoute.LIST) }
+
+    // Success ekranda 1.2 sn dur, sonra listeye dön + refresh
+    LaunchedEffect(route) {
+        if (route == ContactsRoute.SUCCESS) {
+            delay(1200)
+            vm.onEvent(ContactsEvent.Load)
+            route = ContactsRoute.LIST
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        // open sheet
-        if (showAddScreen) {
-            AddNewContact(
-                onCancel = { showAddScreen = false },
-                onSave = { first, last, phone ->
-                    vm.createUser(
-                        firstName = first,
-                        lastName = last,
-                        phoneNumber = phone,
-                        profileImageUrl = "https://picsum.photos/200"
+        when (route) {
+
+            ContactsRoute.ADD -> {
+                AddNewContact(
+                    vm = vm,
+                    onCancel = { route = ContactsRoute.LIST },
+                    onSaved = { route = ContactsRoute.SUCCESS }
+                )
+            }
+
+            ContactsRoute.SUCCESS -> {
+                ContactSavedScreen(
+                    onDone = {
+                        vm.onEvent(ContactsEvent.Load)
+                        route = ContactsRoute.LIST
+                    }
+                )
+            }
+
+            ContactsRoute.LIST -> {
+                val groupsSorted = remember(state.grouped) { state.grouped.toSortedMap() }
+                val isEmpty = groupsSorted.values.sumOf { it.size } == 0
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
+                ) {
+                    HeaderRow(onAddClick = { route = ContactsRoute.ADD })
+
+                    Spacer(Modifier.height(14.dp))
+
+                    SearchField(
+                        value = state.query,
+                        onValueChange = { vm.onEvent(ContactsEvent.QueryChanged(it)) }
                     )
-                    vm.onEvent(ContactsEvent.Load) // refresh
-                    showAddScreen = false
-                }
-            )
-            return@Surface
-        }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 16.dp)
-        ) {
-            HeaderRow(onAddClick = { showAddScreen = true }
-            )
+                    Spacer(Modifier.height(16.dp))
 
-            Spacer(Modifier.height(14.dp))
+                    when {
+                        state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
 
-            SearchField(
-                value = state.query,
-                onValueChange = { vm.onEvent(ContactsEvent.QueryChanged(it)) }
-            )
+                        state.error != null -> Text("Error: ${state.error}")
 
-            Spacer(Modifier.height(16.dp))
+                        isEmpty -> EmptyContacts(
+                            query = state.query,
+                            onCreateClick = { route = ContactsRoute.ADD }
+                        )
 
-            when {
-                state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-
-                state.error != null -> {
-                    Text("Error: ${state.error}")
-                }
-
-                isEmpty -> {
-                    EmptyContacts(
-                        query = state.query,
-                        onCreateClick = { showAddScreen = true }
-                    )
-                }
-
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        groupsSorted.forEach { (letter, list) ->
-                            item(key = "group_$letter") {
-                                LetterGroupCard(
-                                    letter = letter,
-                                    contacts = list
-                                )
+                        else -> LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            groupsSorted.forEach { (letter, list) ->
+                                item(key = "group_$letter") {
+                                    LetterGroupCard(letter = letter, contacts = list)
+                                }
                             }
                         }
                     }
@@ -346,4 +357,46 @@ fun EmptyContacts(
         }
     }
 }
+@Composable
+fun ContactSavedScreen(onDone: () -> Unit) {
+    BackHandler { onDone() }
 
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF00C853), // yeşil
+                    modifier = Modifier.size(140.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(64.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(22.dp))
+
+                Text(
+                    text = "All Done!",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    text = "New contact saved 🎉",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
