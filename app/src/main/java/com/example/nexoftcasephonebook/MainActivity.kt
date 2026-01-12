@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
                 .create(BuildConfig.NEXOFT_API_KEY)
 
             val api = retrofit.create(com.example.nexoftcasephonebook.data.remote.ContactsApi::class.java)
-            val repo = com.example.nexoftcasephonebook.data.repository.ContactsRepositoryImpl(api)
+            val repo = com.example.nexoftcasephonebook.data.repository.ContactsRepositoryImpl(api, appContext = applicationContext)
             val vm = remember { com.example.nexoftcasephonebook.presentation.contacts.ContactsViewModel(repo) }
 
             com.example.nexoftcasephonebook.presentation.contacts.ContactsScreen(vm)

@@ -1,7 +1,11 @@
 package com.example.nexoftcasephonebook.presentation.contacts
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.nexoftcasephonebook.core.network.uriToImagePart
+import com.example.nexoftcasephonebook.data.remote.ContactsApi
 import com.example.nexoftcasephonebook.domain.model.Contact
 import com.example.nexoftcasephonebook.domain.repository.ContactsRepository
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +17,7 @@ import kotlinx.coroutines.withContext
 
 class ContactsViewModel(
     private val repo: ContactsRepository
+
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ContactsState(isLoading = true))
@@ -30,26 +35,20 @@ class ContactsViewModel(
         }
     }
 
-    fun createUser(
-        firstName: String,
-        lastName: String,
-        phoneNumber: String,
-        profileImageUrl: String
-    ) {
+    fun createUser(firstName: String, lastName: String, phoneNumber: String, profileImageUrl: String) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
 
             runCatching {
                 withContext(Dispatchers.IO) {
-                    repo.createUser(firstName, lastName, phoneNumber, profileImageUrl)
+                    val resolved = resolveProfileUrl(profileImageUrl) // content:// ise upload edip url döner
+                    repo.createUser(firstName, lastName, phoneNumber, resolved)
                 }
-            }.onSuccess {
-                load()
-            }.onFailure { ex ->
-                _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
-            }
+            }.onSuccess { load() }
+                .onFailure { ex -> _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") } }
         }
     }
+
 
     fun deleteUser(id: String) {
         viewModelScope.launch {
@@ -67,27 +66,20 @@ class ContactsViewModel(
         }
     }
 
-    fun updateUser(
-        id: String,
-        firstName: String,
-        lastName: String,
-        phoneNumber: String,
-        profileImageUrl: String?
-    ) {
+    fun updateUser(id: String, firstName: String, lastName: String, phoneNumber: String, profileImageUrl: String?) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
 
             runCatching {
                 withContext(Dispatchers.IO) {
-                    repo.updateUser(id, firstName, lastName, phoneNumber, profileImageUrl)
+                    val resolved = profileImageUrl?.let { resolveProfileUrl(it) }
+                    repo.updateUser(id, firstName, lastName, phoneNumber, resolved)
                 }
-            }.onSuccess {
-                load()
-            }.onFailure { ex ->
-                _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") }
-            }
+            }.onSuccess { load() }
+                .onFailure { ex -> _state.update { it.copy(isLoading = false, error = ex.message ?: "Error") } }
         }
     }
+
 
     private fun load() = viewModelScope.launch {
         _state.update { it.copy(isLoading = true, error = null) }
@@ -114,5 +106,23 @@ class ContactsViewModel(
             .groupBy { it.fullName.firstOrNull()?.uppercaseChar() ?: '#' }
 
         _state.update { it.copy(grouped = grouped) }
+    }
+    private fun looksLikeRemoteUrl(s: String?): Boolean {
+        val v = s?.trim().orEmpty()
+        return v.startsWith("http://") || v.startsWith("https://")
+    }
+
+    suspend fun resolveProfileUrl(localOrRemote: String?): String {
+        val v = localOrRemote?.trim()
+        if (v.isNullOrBlank() || v == "null") return "https://picsum.photos/200" // default
+
+        if (looksLikeRemoteUrl(v)) return v
+
+        val uri = Uri.parse(v)
+
+        return when (uri.scheme) {
+            "content", "file" -> repo.uploadImageAndGetUrl(uri)
+            else -> v // relative/string
+        }
     }
 }
