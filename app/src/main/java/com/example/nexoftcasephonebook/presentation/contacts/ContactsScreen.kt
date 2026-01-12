@@ -52,6 +52,17 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.toMutableStateList
+
 private sealed interface ContactsRoute {
     data object List : ContactsRoute
     data object Add : ContactsRoute
@@ -94,7 +105,6 @@ fun ContactsScreen(vm: ContactsViewModel) {
                     showDeleteSheet = false
                     deleteTarget = null
 
-                    // ✅ silince list’e dön (profile’da da bu çalışır)
                     route = ContactsRoute.List
                 }
             )
@@ -150,7 +160,30 @@ private fun ContactsListScreen(
 ) {
     val groupsSorted = remember(state.grouped) { state.grouped.toSortedMap() }
     val isEmpty = groupsSorted.values.sumOf { it.size } == 0
+    val allContacts = remember(groupsSorted) { groupsSorted.values.flatten() }
+    val history = rememberSaveable(
+            saver = listSaver(
+                save = { it.toList() },
+                restore = { it.toMutableStateList() }
+            )
+            ) { mutableStateListOf<String>() }
 
+    val matches = remember(state.query, allContacts) {
+        val q = state.query.trim()
+        if (q.isBlank()) emptyList()
+        else allContacts.filter {
+            val full = "${it.firstName} ${it.lastName}".trim()
+            full.contains(q, ignoreCase = true)
+        }
+    }
+    fun addToHistory(q: String) {
+        val t = q.trim()
+        if (t.isBlank()) return
+        history.remove(t)
+        history.add(0, t)
+        while (history.size > 5) history.removeAt(history.lastIndex)
+    }
+    var searchFocused by remember { mutableStateOf(false) }
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -166,42 +199,79 @@ private fun ContactsListScreen(
 
             SearchField(
                 value = state.query,
-                onValueChange = onQueryChanged
+                onValueChange = onQueryChanged,
+                onFocusChanged = { searchFocused = it },
+                onSearch = { addToHistory(state.query) }
             )
 
             Spacer(Modifier.height(16.dp))
+            if (searchFocused) {
+                when {
+                    state.query.isBlank() -> {
+                        SearchHistoryCard(
+                            items = history,
+                            onClearAll = { history.clear() },
+                            onRemove = { history.remove(it) },
+                            onPick = {
+                                onQueryChanged(it)
+                                addToHistory(it)
+                            }
+                        )
+                    }
 
-            when {
-                state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    matches.isEmpty() -> {
+                        NoResultsView()
+                    }
+
+                    else -> {
+                        TopMatchesCard(
+                            contacts = matches,
+                            onClick = { c ->
+                                addToHistory(state.query)
+                                onContactClick(c)
+                            }
+                        )
+                    }
                 }
+            } else {
+                // (loading/error/empty/grouped)
+                val isEmpty = groupsSorted.values.sumOf { it.size } == 0
 
-                state.error != null -> {
-                    Text("Error: ${state.error}")
-                }
-
-                isEmpty -> {
-                    EmptyContacts(
-                        query = state.query,
-                        onCreateClick = onAddClick
-                    )
-                }
-
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                when {
+                    state.isLoading -> Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        groupsSorted.forEach { (letter, list) ->
-                            item(key = "group_$letter") {
-                                LetterGroupCard(
-                                    letter = letter,
-                                    contacts = list,
-                                    onContactClick = onContactClick,
-                                    onEditClick = onEditClick,
-                                    onDeleteClick = onDeleteClick
-                                )
+                        CircularProgressIndicator()
+                    }
+
+                    state.error != null -> {
+                        Text("Error: ${state.error}")
+                    }
+
+                    isEmpty -> {
+                        EmptyContacts(
+                            query = state.query,
+                            onCreateClick = onAddClick
+                        )
+                    }
+
+                    else -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            groupsSorted.forEach { (letter, list) ->
+                                item(key = "group_$letter") {
+                                    LetterGroupCard(
+                                        letter = letter,
+                                        contacts = list,
+                                        onContactClick = onContactClick,
+                                        onEditClick = onEditClick,
+                                        onDeleteClick = onDeleteClick
+                                    )
+                                }
                             }
                         }
                     }
@@ -243,16 +313,29 @@ private fun HeaderRow(onAddClick: () -> Unit) {
 @Composable
 private fun SearchField(
     value: String,
-    onValueChange: (String) -> Unit
+    onValueChange: (String) -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
+    onSearch: () -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
+
     TextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { onFocusChanged(it.isFocused) },
         singleLine = true,
         placeholder = { Text("Search by name") },
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
         shape = RoundedCornerShape(16.dp),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(
+            onSearch = {
+                onSearch()
+                focusManager.clearFocus()
+            }
+        ),
         colors = TextFieldDefaults.colors(
             focusedIndicatorColor = MaterialTheme.colorScheme.surface,
             unfocusedIndicatorColor = MaterialTheme.colorScheme.surface,
@@ -260,7 +343,6 @@ private fun SearchField(
         )
     )
 }
-
 @Composable
 private fun LetterGroupCard(
     letter: Char,
@@ -323,7 +405,6 @@ private fun SwipeActionsContactRow(
     val actionsWidthDp = 160.dp
     val actionsWidthPx = with(density) { actionsWidthDp.toPx() }
 
-    // Anchors'ı önce üret
     val anchors = remember(actionsWidthPx) {
         DraggableAnchors<RowSwipe> {
             RowSwipe.Closed at 0f
@@ -331,7 +412,6 @@ private fun SwipeActionsContactRow(
         }
     }
 
-    // ✅ AnchoredDraggableState'i anchors ile kur (ilk frame’de hazır olur)
     val dragState = remember(actionsWidthPx) {
         AnchoredDraggableState(
             initialValue = RowSwipe.Closed,
@@ -344,7 +424,7 @@ private fun SwipeActionsContactRow(
         )
     }
 
-    // ✅ requireOffset yerine safe offset
+    // safe offset
     val rawOffset = dragState.offset
     val safeOffset = if (rawOffset.isNaN()) 0f else rawOffset
 
@@ -353,7 +433,6 @@ private fun SwipeActionsContactRow(
             .fillMaxWidth()
             .heightIn(min = 72.dp)
     ) {
-        // Arkadaki butonlar
         Row(
             modifier = Modifier
                 .matchParentSize()
@@ -382,7 +461,6 @@ private fun SwipeActionsContactRow(
             ) { Icon(Icons.Outlined.Delete, contentDescription = "Delete") }
         }
 
-        // Öndeki satır
         Row(
             modifier = Modifier
                 .offset { IntOffset(safeOffset.roundToInt(), 0) }
@@ -390,11 +468,10 @@ private fun SwipeActionsContactRow(
                 .clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .clickable() {
-                    // swipe açıksa önce kapat
                     if (dragState.currentValue == RowSwipe.Open) {
                         scope.launch { dragState.animateTo(RowSwipe.Closed) }
                     } else {
-                        onClick() // profile'a git
+                        onClick()
                     }
                 }
                 .anchoredDraggable(dragState, Orientation.Horizontal)
@@ -1052,3 +1129,161 @@ private fun DeleteConfirmSheet(
     }
 }
 
+@Composable
+private fun SearchHistoryCard(
+    items: List<String>,
+    onClearAll: () -> Unit,
+    onRemove: (String) -> Unit,
+    onPick: (String) -> Unit
+) {
+    if (items.isEmpty()) return
+
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SEARCH HISTORY",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onClearAll) { Text("Clear All") }
+            }
+
+            Divider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+            items.forEachIndexed { index, q ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(q) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { onRemove(q) }) {
+                        Icon(Icons.Default.Close, contentDescription = "Remove")
+                    }
+                    Text(
+                        text = q,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (index != items.lastIndex) {
+                    Divider(color = MaterialTheme.colorScheme.surfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TopMatchesCard(
+    contacts: List<Contact>,
+    onClick: (Contact) -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Text(
+                text = "TOP NAME MATCHES",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+            )
+
+            Divider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+            contacts.take(10).forEachIndexed { index, c ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onClick(c) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Avatar(c)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "${c.firstName} ${c.lastName}".trim(),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = c.phoneNumber,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                if (index != contacts.take(10).lastIndex) {
+                    Divider(color = MaterialTheme.colorScheme.surfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoResultsView() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                modifier = Modifier.size(120.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                text = "No Results",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                text = "The user you are looking for could not be found.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
