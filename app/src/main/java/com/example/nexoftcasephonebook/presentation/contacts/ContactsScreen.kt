@@ -2,7 +2,6 @@ package com.example.nexoftcasephonebook.presentation.contacts
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -16,8 +15,6 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -39,7 +36,22 @@ import android.provider.ContactsContract
 import android.net.Uri
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
-
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import androidx.compose.runtime.remember
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.rememberSplineBasedDecay
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateTo
 private sealed interface ContactsRoute {
     data object List : ContactsRoute
     data object Add : ContactsRoute
@@ -47,13 +59,47 @@ private sealed interface ContactsRoute {
     data class Edit(val contact: Contact) : ContactsRoute
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContactsScreen(vm: ContactsViewModel) {
+
     val state by vm.state.collectAsState()
     LaunchedEffect(Unit) { vm.onEvent(ContactsEvent.Load) }
 
     var route by remember { mutableStateOf<ContactsRoute>(ContactsRoute.List) }
+    var deleteTarget by remember { mutableStateOf<Contact?>(null) }
+    var showDeleteSheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    fun requestDelete(c: Contact) {
+        deleteTarget = c
+        showDeleteSheet = true
+    }
+    if (showDeleteSheet && deleteTarget != null) {
+        ModalBottomSheet (
+            onDismissRequest = {
+                showDeleteSheet = false
+                deleteTarget = null
+            },
+            sheetState = sheetState
+        ) {
+            DeleteConfirmSheet(
+                onNo = {
+                    showDeleteSheet = false
+                    deleteTarget = null
+                },
+                onYes = {
+                    val c = deleteTarget!!
+                    vm.deleteUser(c.id)       // String id
+                    showDeleteSheet = false
+                    deleteTarget = null
+
+                    // ✅ silince list’e dön (profile’da da bu çalışır)
+                    route = ContactsRoute.List
+                }
+            )
+        }
+    }
     when (val r = route) {
         ContactsRoute.List -> ContactsListScreen(
             state = state,
@@ -61,7 +107,7 @@ fun ContactsScreen(vm: ContactsViewModel) {
             onContactClick = { c -> route = ContactsRoute.Profile(c) },
             onEditClick = { c -> route = ContactsRoute.Edit(c) },
             onDeleteClick = { c ->
-                vm.deleteUser(c.id)              // ✅ String id
+                requestDelete(c) // ✅ String id
             },
             onQueryChanged = { q -> vm.onEvent(ContactsEvent.QueryChanged(q)) }
         )
@@ -76,9 +122,7 @@ fun ContactsScreen(vm: ContactsViewModel) {
             contact = r.contact,
             onBack = { route = ContactsRoute.List },
             onEdit = { route = ContactsRoute.Edit(r.contact) },
-            onDelete = {
-                vm.deleteUser(r.contact.id)
-                route = ContactsRoute.List
+            onDelete = {requestDelete(r.contact)
             }
         )
 
@@ -246,6 +290,7 @@ private fun LetterGroupCard(
             contacts.forEachIndexed { index, c ->
                 SwipeActionsContactRow(
                     contact = c,
+                    onClick = { onContactClick(c) },
                     onEdit = { onEditClick(c) },
                     onDelete = { onDeleteClick(c) }
                 )
@@ -261,88 +306,119 @@ private fun LetterGroupCard(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private enum class RowSwipe { Closed, Open }
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SwipeActionsContactRow(
     contact: Contact,
+    onClick: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { true }
-    )
+    val density = LocalDensity.current
+    val decay = rememberSplineBasedDecay<Float>()
 
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        enableDismissFromEndToStart = true,
-        backgroundContent = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 68.dp)
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Edit
-                FilledTonalIconButton(
-                    onClick = {
-                        onEdit()
-                        scope.launch { dismissState.reset() }
+    val actionsWidthDp = 160.dp
+    val actionsWidthPx = with(density) { actionsWidthDp.toPx() }
+
+    // Anchors'ı önce üret
+    val anchors = remember(actionsWidthPx) {
+        DraggableAnchors<RowSwipe> {
+            RowSwipe.Closed at 0f
+            RowSwipe.Open at -actionsWidthPx
+        }
+    }
+
+    // ✅ AnchoredDraggableState'i anchors ile kur (ilk frame’de hazır olur)
+    val dragState = remember(actionsWidthPx) {
+        AnchoredDraggableState(
+            initialValue = RowSwipe.Closed,
+            anchors = anchors,
+            positionalThreshold = { distance -> distance * 0.5f },
+            velocityThreshold = { with(density) { 120.dp.toPx() } },
+            snapAnimationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            decayAnimationSpec = decay,
+            confirmValueChange = { true }
+        )
+    }
+
+    // ✅ requireOffset yerine safe offset
+    val rawOffset = dragState.offset
+    val safeOffset = if (rawOffset.isNaN()) 0f else rawOffset
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+    ) {
+        // Arkadaki butonlar
+        Row(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(end = 16.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilledTonalIconButton(
+                onClick = {
+                    onEdit()
+                    scope.launch { dragState.animateTo(RowSwipe.Closed) }
+                }
+            ) { Icon(Icons.Outlined.Edit, contentDescription = "Edit") }
+
+            Spacer(Modifier.width(12.dp))
+
+            FilledTonalIconButton(
+                onClick = {
+                    onDelete()
+                    scope.launch { dragState.animateTo(RowSwipe.Closed) }
+                },
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) { Icon(Icons.Outlined.Delete, contentDescription = "Delete") }
+        }
+
+        // Öndeki satır
+        Row(
+            modifier = Modifier
+                .offset { IntOffset(safeOffset.roundToInt(), 0) }
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .clickable() {
+                    // swipe açıksa önce kapat
+                    if (dragState.currentValue == RowSwipe.Open) {
+                        scope.launch { dragState.animateTo(RowSwipe.Closed) }
+                    } else {
+                        onClick() // profile'a git
                     }
-                ) {
-                    Icon(Icons.Outlined.Edit, contentDescription = "Edit")
                 }
-
-                Spacer(Modifier.width(10.dp))
-
-                // Delete
-                FilledTonalIconButton(
-                    onClick = {
-                        onDelete()
-                        scope.launch { dismissState.reset() }
-                    },
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Icon(Icons.Outlined.Delete, contentDescription = "Delete")
-                }
-            }
-        },
-        content = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Avatar(contact)
-                Spacer(Modifier.width(12.dp))
-
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "${contact.firstName} ${contact.lastName}".trim(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = contact.phoneNumber,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                .anchoredDraggable(dragState, Orientation.Horizontal)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        )  {
+            Avatar(contact)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "${contact.firstName} ${contact.lastName}".trim(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = contact.phoneNumber,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -354,12 +430,16 @@ private fun Avatar(c: Contact) {
         AsyncImage(
             model = c.profileImageUrl,
             contentDescription = null,
-            modifier = Modifier.size(size).clip(CircleShape)
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape)
         )
     } else {
         val initial = (c.firstName.firstOrNull() ?: c.lastName.firstOrNull() ?: '#').uppercase()
         Box(
-            modifier = Modifier.size(size).clip(CircleShape),
+            modifier = Modifier
+                .size(size)
+                .clip(CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Surface(
@@ -453,7 +533,9 @@ private fun ContactProfileScreen(
                     AsyncImage(
                         model = contact.profileImageUrl,
                         contentDescription = null,
-                        modifier = Modifier.size(120.dp).clip(CircleShape)
+                        modifier = Modifier
+                            .size(120.dp)
+                            .clip(CircleShape)
                     )
                 } else {
                     Box(
@@ -733,7 +815,9 @@ private fun EditContactScreen(
                     AsyncImage(
                         model = photoModel,
                         contentDescription = null,
-                        modifier = Modifier.size(120.dp).clip(CircleShape)
+                        modifier = Modifier
+                            .size(120.dp)
+                            .clip(CircleShape)
                     )
                 } else {
                     Box(
@@ -917,3 +1001,54 @@ fun EmptyContacts(
         }
     }
 }
+
+@Composable
+private fun DeleteConfirmSheet(
+    onNo: () -> Unit,
+    onYes: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "Delete Contact",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Are you sure you want to delete this contact?",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(Modifier.height(18.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            OutlinedButton(
+                onClick = onNo,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp),
+                shape = RoundedCornerShape(28.dp)
+            ) { Text("No") }
+
+            Button(
+                onClick = onYes,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp),
+                shape = RoundedCornerShape(28.dp)
+            ) { Text("Yes") }
+        }
+
+        Spacer(Modifier.height(18.dp))
+    }
+}
+
