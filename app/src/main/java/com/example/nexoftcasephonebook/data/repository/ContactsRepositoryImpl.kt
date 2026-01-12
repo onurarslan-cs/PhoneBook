@@ -7,7 +7,7 @@ import com.example.nexoftcasephonebook.domain.model.Contact
 import com.example.nexoftcasephonebook.domain.repository.ContactsRepository
 import com.example.nexoftcasephonebook.data.remote.dto.CreateUserRequest
 import android.net.Uri
-import com.example.nexoftcasephonebook.core.network.uriToImagePart
+import com.example.nexoftcasephonebook.core.network.uriToJpegPart
 
 class ContactsRepositoryImpl(
     private val api: ContactsApi,
@@ -44,16 +44,21 @@ class ContactsRepositoryImpl(
             )
         )
     }
-   override suspend fun uploadImageAndGetUrl(uri: Uri): String {
-        val part = uriToImagePart(appContext, uri, partName = "file")
+
+    override suspend fun uploadImageAndGetUrl(uri: Uri): String {
+        val part = uriToJpegPart(appContext, uri, partName = "image")
         val res = api.uploadImage(part)
 
         if (res.success != true) {
             throw IllegalStateException(res.messages?.joinToString() ?: "Upload failed")
         }
-        return res.data?.resolvedUrl
-            ?: throw IllegalStateException("Upload success but url missing")
+
+        val url = res.data?.imageUrl ?: throw IllegalStateException("Upload success but imageUrl missing")
+        return url
     }
+
+
+
     override suspend fun deleteUser(id: String) {
         api.deleteUser(id)
     }

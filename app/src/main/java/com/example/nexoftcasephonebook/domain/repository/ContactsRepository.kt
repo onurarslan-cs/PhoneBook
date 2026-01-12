@@ -1,6 +1,5 @@
 package com.example.nexoftcasephonebook.domain.repository
 import android.net.Uri
-import com.example.nexoftcasephonebook.core.network.uriToImagePart
 import com.example.nexoftcasephonebook.domain.model.Contact
 
 interface ContactsRepository {

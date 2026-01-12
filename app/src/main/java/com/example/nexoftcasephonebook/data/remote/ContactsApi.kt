@@ -13,6 +13,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.Multipart
 import retrofit2.http.Part
 import retrofit2.http.Path
+
 interface ContactsApi {
 
     @GET("api/User/GetAll")
@@ -34,8 +35,9 @@ interface ContactsApi {
     @Multipart
     @POST("api/User/UploadImage")
     suspend fun uploadImage(
-        @Part file: MultipartBody.Part
+        @Part image: MultipartBody.Part
     ): ApiResponseDto<UploadImageResponseSuccessDto>
+
 }
 
 data class UpdateUserRequest(
